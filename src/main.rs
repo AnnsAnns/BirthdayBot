@@ -119,7 +119,7 @@ async fn get_birthday(
     >,
 ) -> Result<(), Error> {
     let user = user.unwrap_or_else(|| ctx.author().clone());
-    let entry = get_birthday_from_file(user.id, ctx.guild_id().unwrap_or(GuildId::from(0))).await?;
+    let entry = get_birthday_from_file(user.id, ctx.guild_id().unwrap()).await?;
     let entry = match entry {
         Some(entry) => entry,
         None => {
