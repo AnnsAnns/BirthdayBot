@@ -91,6 +91,11 @@ async fn set_birthday(
         serenity::User,
     >,
 ) -> Result<(), Error> {
+    if day < 1 || day > 31 || month < 1 || month > 12 {
+        ctx.say("🐺🎩❌ Invalid date!").await?;
+        return Ok(());
+    }
+
     let user = user.unwrap_or_else(|| ctx.author().clone());
     append_birthday(user.id, ctx.guild_id().unwrap(), user.name.clone(), day, month, year).await?;
     let year = match year {
