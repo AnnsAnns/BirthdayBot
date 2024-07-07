@@ -18,6 +18,7 @@ struct BirthdayList {
 #[derive(Debug, Serialize, Deserialize)]
 struct BirthdayEntry {
     user_id: serenity::UserId,
+    guild_id: GuildId,
     name: String,
     day: usize,
     month: usize,
@@ -26,7 +27,16 @@ struct BirthdayEntry {
 
 async fn read_from_file() -> Result<BirthdayList, Error> {
     let _lock = FILE_LOCK.lock().await;
-    let data = std::fs::read_to_string(FILE_PATH).unwrap_or_default();
+    let data = std::fs::read_to_string(FILE_PATH);
+    // Make a backup of the file if it's corrupted and return an empty list
+    let data = match data {
+        Ok(data) => data,
+        Err(_) => {
+            let backup_path = format!("{}.bak", FILE_PATH);
+            let _ = std::fs::copy(FILE_PATH, &backup_path);
+            return Ok(BirthdayList::default());
+        }
+    };
     Ok(serde_json::from_str(&data).unwrap_or_default())
 }
 
@@ -39,6 +49,7 @@ async fn write_to_file(birthdays: &BirthdayList) -> Result<(), Error> {
 
 async fn append_birthday(
     user_id: serenity::UserId,
+    guild_id: GuildId,
     name: String,
     day: usize,
     month: usize,
@@ -46,11 +57,12 @@ async fn append_birthday(
 ) -> Result<(), Error> {
     let mut birthdays = read_from_file().await?;
     // Remove any existing entry for this user
-    birthdays.entries.retain(|entry| entry.user_id != user_id);
+    birthdays.entries.retain(|entry| entry.user_id != user_id && entry.guild_id != guild_id);
 
     // Add the new entry
     birthdays.entries.push(BirthdayEntry {
         user_id,
+        guild_id,
         name,
         day,
         month,
@@ -60,12 +72,12 @@ async fn append_birthday(
     Ok(())
 }
 
-async fn get_birthday_from_file(user_id: serenity::UserId) -> Result<Option<BirthdayEntry>, Error> {
+async fn get_birthday_from_file(user_id: serenity::UserId, guild_id: GuildId) -> Result<Option<BirthdayEntry>, Error> {
     let birthdays = read_from_file().await?;
     Ok(birthdays
         .entries
         .into_iter()
-        .find(|entry| entry.user_id == user_id))
+        .find(|entry| entry.user_id == user_id && entry.guild_id == guild_id))
 }
 
 /// Sets your or another user's birthday
@@ -80,7 +92,7 @@ async fn set_birthday(
     >,
 ) -> Result<(), Error> {
     let user = user.unwrap_or_else(|| ctx.author().clone());
-    append_birthday(user.id, user.name.clone(), day, month, year).await?;
+    append_birthday(user.id, ctx.guild_id().unwrap(), user.name.clone(), day, month, year).await?;
     let year = match year {
         Some(year) => year.to_string(),
         None => "???".to_string(),
@@ -102,11 +114,11 @@ async fn get_birthday(
     >,
 ) -> Result<(), Error> {
     let user = user.unwrap_or_else(|| ctx.author().clone());
-    let entry = get_birthday_from_file(user.id).await?;
+    let entry = get_birthday_from_file(user.id, ctx.guild_id().unwrap_or(GuildId::from(0))).await?;
     let entry = match entry {
         Some(entry) => entry,
         None => {
-            ctx.say("☹️🎈 No birthday set for this user!").await?;
+            ctx.say("☹️🎈 No birthday set for this user for this guild!").await?;
             return Ok(());
         }
     };
