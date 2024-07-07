@@ -99,8 +99,8 @@ async fn set_birthday(
     let user = user.unwrap_or_else(|| ctx.author().clone());
     append_birthday(user.id, ctx.guild_id().unwrap(), user.name.clone(), day, month, year).await?;
     let year = match year {
-        Some(year) => year.to_string(),
-        None => "???".to_string(),
+        Some(year) => format!(".{}",year),
+        None => "".to_string(),
     };
     ctx.say(format!(
         "✍️📅🎈 Added birthday for {} on {}.{}.{}!",
