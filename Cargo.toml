@@ -1,0 +1,12 @@
+[package]
+name = "birthdaybot"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+dotenv = "0.15.0"
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
+poise = "0.6.1"
+serde_json = "1.0.120"
+serde = "1.0.204"
+chrono = "0.4.38"
