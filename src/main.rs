@@ -57,8 +57,7 @@ async fn append_birthday(
 ) -> Result<(), Error> {
     let mut birthdays = read_from_file().await?;
     // Remove any existing entry for this user
-    birthdays.entries.retain(|entry| entry.user_id != user_id && entry.guild_id != guild_id);
-
+    birthdays.entries.retain(|entry| entry.user_id != user_id || entry.guild_id != guild_id);
     // Add the new entry
     birthdays.entries.push(BirthdayEntry {
         user_id,
@@ -103,7 +102,7 @@ async fn set_birthday(
         None => "".to_string(),
     };
     ctx.say(format!(
-        "✍️📅🎈 Added birthday for {} on {}.{}.{}!",
+        "✍️📅🎈 Added birthday for {} on {}.{}{}!",
         user.name, day, month, year
     ))
     .await?;
