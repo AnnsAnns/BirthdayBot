@@ -335,10 +335,9 @@ async fn main() {
         .setup(|ctx, _ready, framework| {
             Box::pin(async move {
                 tokio::spawn(check_for_announcements(ctx.http.clone()));
-                poise::builtins::register_in_guild(
+                poise::builtins::register_globally(
                     ctx.clone(),
-                    &framework.options().commands,
-                    GuildId::from(477891535174631424),
+                    &framework.options().commands
                 )
                 .await?;
                 Ok(Data {})
