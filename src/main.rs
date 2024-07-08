@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use core::task;
+use std::{collections::HashMap, sync::Arc};
 
 use chrono::{Datelike, NaiveDate, Utc};
 use poise::serenity_prelude::{self as serenity, ChannelId, GuildId};
@@ -8,6 +9,7 @@ use tokio::sync::Mutex;
 static FILE_LOCK: Mutex<()> = Mutex::const_new(());
 static FILE_PATH: &str = "birthdays.json";
 static LIFE_EXPECTANCY: i32 = 83;
+static CHECK_TIME: u64 = 60 * 60; // 1 hour
 
 struct Data {} // User data, which is stored and accessible in all command invocations
 type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -25,6 +27,7 @@ struct BirthdayEntry {
     guild_id: GuildId,
     name: String,
     date: NaiveDate,
+    last_announcement: Option<NaiveDate>,
 }
 
 async fn read_from_file() -> Result<BirthdayList, Error> {
@@ -79,6 +82,7 @@ async fn append_birthday(
         guild_id,
         name,
         date: args_to_date(day, month, year)?,
+        last_announcement: None,
     });
     write_to_file(&birthdays).await?;
     Ok(())
@@ -135,7 +139,10 @@ async fn set_birthday(
     .await?;
     ctx.say(format!(
         "✍️📅🎈 Added birthday for {} on {}.{} (UTC {})!",
-        user.name, day, month, date_to_discord_timestamp(args_to_date(day, month, year)?, false)
+        user.name,
+        day,
+        month,
+        date_to_discord_timestamp(args_to_date(day, month, year)?, false)
     ))
     .await?;
     Ok(())
@@ -227,13 +234,19 @@ async fn time_left(
     };
 
     if entry.date.year() == 2024 {
-        ctx.say("🐺🎩❌ Can't calculate skibidi (User has not set year)!").await?;
+        ctx.say("🐺🎩❌ Can't calculate skibidi (User has not set year)!")
+            .await?;
         return Ok(());
     }
 
     // Check whether the birthday already happened this year
     let entry = BirthdayEntry {
-        date: NaiveDate::from_ymd_opt(entry.date.year() + LIFE_EXPECTANCY, entry.date.month(), entry.date.day()).unwrap(),
+        date: NaiveDate::from_ymd_opt(
+            entry.date.year() + LIFE_EXPECTANCY,
+            entry.date.month(),
+            entry.date.day(),
+        )
+        .unwrap(),
         ..entry
     };
 
@@ -246,6 +259,47 @@ async fn time_left(
     Ok(())
 }
 
+async fn check_for_announcements(context: Arc<serenity::Http>) {
+    println!("Checking for birthdays...");
+
+    loop {
+        let mut birthdays = read_from_file().await.unwrap();
+
+        // Lock the file to prevent overwrites while we're checking
+        {
+            let _ = FILE_LOCK.lock().await;
+
+            let today = Utc::now().naive_utc().date();
+            for entry in birthdays.entries.iter_mut() {
+                if entry.date.month() == today.month()
+                    && entry.date.day() == today.day()
+                    && (entry.last_announcement.is_none()
+                        || entry.last_announcement.unwrap().year() != today.year())
+                {
+                    let channel = birthdays.server_channels.get(&entry.guild_id);
+                    if let Some(channel) = channel {
+                        let channel = channel.clone();
+                        channel
+                            .say(
+                                &context,
+                                format!("🎉🎈 Happy birthday {}! 🎈🎉", entry.name),
+                            )
+                            .await
+                            .unwrap();
+                    }
+
+                    entry.last_announcement = Some(today);
+                }
+            }
+
+            let data = serde_json::to_string_pretty(&birthdays).unwrap();
+            std::fs::write(FILE_PATH, data).unwrap();
+        }
+
+        tokio::time::sleep(tokio::time::Duration::from_secs(CHECK_TIME)).await;
+    }
+}
+
 #[tokio::main]
 async fn main() {
     dotenv::dotenv().unwrap();
@@ -254,12 +308,23 @@ async fn main() {
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
-            commands: vec![set_birthday(), get_birthday(), time_left(), set_announcement_channel()],
+            commands: vec![
+                set_birthday(),
+                get_birthday(),
+                time_left(),
+                set_announcement_channel(),
+            ],
             ..Default::default()
         })
         .setup(|ctx, _ready, framework| {
             Box::pin(async move {
-                poise::builtins::register_in_guild(ctx, &framework.options().commands, GuildId::from(477891535174631424)).await?;
+                tokio::spawn(check_for_announcements(ctx.http.clone()));
+                poise::builtins::register_in_guild(
+                    ctx.clone(),
+                    &framework.options().commands,
+                    GuildId::from(477891535174631424),
+                )
+                .await?;
                 Ok(Data {})
             })
         })
