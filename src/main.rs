@@ -1,7 +1,7 @@
 use core::task;
 use std::{collections::HashMap, sync::Arc};
 
-use chrono::{Datelike, NaiveDate, Utc};
+use chrono::{Datelike, FixedOffset, NaiveDate, TimeZone, Utc};
 use poise::serenity_prelude::{self as serenity, ChannelId, GuildId};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -28,6 +28,7 @@ struct BirthdayEntry {
     name: String,
     date: NaiveDate,
     last_announcement: Option<NaiveDate>,
+    utc_offset: i32,
 }
 
 async fn read_from_file() -> Result<BirthdayList, Error> {
@@ -39,7 +40,7 @@ async fn read_from_file() -> Result<BirthdayList, Error> {
         Err(_) => {
             let backup_path = format!("{}.bak", FILE_PATH);
             let _ = std::fs::copy(FILE_PATH, &backup_path);
-            return Ok(BirthdayList::default());
+            panic!("Corrupted file, backed up to {}", backup_path);
         }
     };
     Ok(serde_json::from_str(&data).unwrap_or_default())
@@ -53,9 +54,6 @@ async fn write_to_file(birthdays: &BirthdayList) -> Result<(), Error> {
 }
 
 fn args_to_date(day: usize, month: usize, year: Option<usize>) -> Result<NaiveDate, Error> {
-    if day < 1 || day > 31 || month < 1 || month > 12 {
-        return Err("Invalid date!".into());
-    }
     match NaiveDate::from_ymd_opt(year.unwrap_or(2024) as i32, month as u32, day as u32) {
         Some(date) => Ok(date),
         None => Err("Invalid date!".into()),
@@ -69,6 +67,7 @@ async fn append_birthday(
     day: usize,
     month: usize,
     year: Option<usize>,
+    utc_offset: i32,
 ) -> Result<(), Error> {
     let mut birthdays = read_from_file().await?;
     // Remove any existing entry for this user and this specific guild
@@ -83,18 +82,21 @@ async fn append_birthday(
         name,
         date: args_to_date(day, month, year)?,
         last_announcement: None,
+        utc_offset,
     });
     write_to_file(&birthdays).await?;
     Ok(())
 }
 
-fn date_to_discord_timestamp(date: NaiveDate, relative: bool) -> String {
-    let flag = if relative { "R" } else { "D" };
-    format!(
-        "<t:{}:{}>",
-        date.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp(),
-        flag
-    )
+fn date_to_discord_timestamp(date: NaiveDate, offset: i32, relative: bool) -> String {
+    let flag = if relative { "R" } else { "f" };
+
+    // Calculate time with offset
+    let offset = if offset == 0 { 0 } else { offset - 1 };
+    let date = date.and_hms_opt(0, 0, 0).unwrap() - chrono::Duration::hours(offset as i64);
+    let timestamp = date.and_utc().timestamp();
+
+    format!("<t:{}:{}>", timestamp, flag)
 }
 
 async fn get_birthday_from_file(
@@ -108,6 +110,14 @@ async fn get_birthday_from_file(
         .find(|entry| entry.user_id == user_id && entry.guild_id == guild_id))
 }
 
+fn offset_to_string(offset: i32) -> String {
+    if offset >= 0 {
+        format!("+{}", offset)
+    } else {
+        format!("{}", offset)
+    }
+}
+
 /// Sets your or another user's birthday
 #[poise::command(slash_command, prefix_command)]
 async fn set_birthday(
@@ -115,6 +125,7 @@ async fn set_birthday(
     #[description = "Day"] day: usize,
     #[description = "Month"] month: usize,
     #[description = "Year"] year: Option<usize>,
+    #[description = "UTC offset from UTC+00"] utc_offset: i32,
     #[description = "User to set the birthday for (defaults to yourself)"] user: Option<
         serenity::User,
     >,
@@ -135,14 +146,17 @@ async fn set_birthday(
         day,
         month,
         year,
+        utc_offset,
     )
     .await?;
+
     ctx.say(format!(
-        "✍️📅🎈 Added birthday for {} on {}.{} (UTC {})!",
+        "✍️📅🎈 Added birthday for {} on {}.{} (UTC{}) which is {} for you!",
         user.name,
         day,
         month,
-        date_to_discord_timestamp(args_to_date(day, month, year)?, false)
+        offset_to_string(utc_offset),
+        date_to_discord_timestamp(args_to_date(day, month, year)?, utc_offset, false)
     ))
     .await?;
     Ok(())
@@ -188,12 +202,13 @@ async fn get_birthday(
         NaiveDate::from_ymd_opt(year, entry.date.month(), entry.date.day()).unwrap();
 
     ctx.say(format!(
-        "📅🎈 {}'s birthday is on {}.{} ({} UTC) so {}!",
+        "📅🎈 {}'s birthday is on {}.{} (UTC{}) so {} which is {} for you!",
         entry.name,
         entry.date.day(),
         entry.date.month(),
-        date_to_discord_timestamp(next_birthday, false),
-        date_to_discord_timestamp(next_birthday, true)
+        offset_to_string(entry.utc_offset),
+        date_to_discord_timestamp(next_birthday, entry.utc_offset, true),
+        date_to_discord_timestamp(next_birthday, entry.utc_offset, false),
     ))
     .await?;
     Ok(())
@@ -253,7 +268,7 @@ async fn time_left(
     ctx.say(format!(
         "💀 {} is expected to skibidi out of this world {} (🇩🇪 avg)",
         entry.name,
-        date_to_discord_timestamp(entry.date, true)
+        date_to_discord_timestamp(entry.date, entry.utc_offset, true)
     ))
     .await?;
     Ok(())
@@ -271,8 +286,9 @@ async fn check_for_announcements(context: Arc<serenity::Http>) {
 
             let today = Utc::now().naive_utc().date();
             for entry in birthdays.entries.iter_mut() {
-                if entry.date.month() == today.month()
-                    && entry.date.day() == today.day()
+                let offset_entry = entry.date - chrono::Duration::hours(entry.utc_offset as i64);
+                if offset_entry.month() == today.month()
+                    && offset_entry.day() == today.day()
                     && (entry.last_announcement.is_none()
                         || entry.last_announcement.unwrap().year() != today.year())
                 {
@@ -282,7 +298,7 @@ async fn check_for_announcements(context: Arc<serenity::Http>) {
                         channel
                             .say(
                                 &context,
-                                format!("🎉🎈 Happy birthday {}! 🎈🎉", entry.name),
+                                format!("🎉🎈 Happy Birthday {} by @everyone! 🎈🎉", entry.name),
                             )
                             .await
                             .unwrap();
