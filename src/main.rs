@@ -8,8 +8,8 @@ use tokio::sync::Mutex;
 
 static FILE_LOCK: Mutex<()> = Mutex::const_new(());
 static FILE_PATH: &str = "birthdays.json";
-static LIFE_EXPECTANCY: i32 = 83;
-static CHECK_TIME: u64 = 60 * 60; // 1 hour
+const LIFE_EXPECTANCY: i32 = 83;
+const CHECK_TIME: u64 = 60 * 60; // 1 hour
 
 struct Data {} // User data, which is stored and accessible in all command invocations
 type Error = Box<dyn std::error::Error + Send + Sync>;
