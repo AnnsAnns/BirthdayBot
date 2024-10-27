@@ -298,7 +298,7 @@ async fn check_for_announcements(context: Arc<serenity::Http>) {
                         channel
                             .say(
                                 &context,
-                                format!("🎉🎈 Happy Birthday {} by @everyone! 🎈🎉", entry.name),
+                                format!("🎉🎈 Happy Birthday {}! 🎈🎉", entry.name),
                             )
                             .await
                             .unwrap();
